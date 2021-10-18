@@ -1,0 +1,130 @@
+#Function for ROC with Naive Bayes Classification
+get_roc_metric <- function(data_tr_sample, target, best_vars) 
+{
+  # data_tr_sample=data_sol
+  # target = target_var_s
+  # best_vars=names_2
+  fitControl <- trainControl(method = "cv", 
+                             number = 10,
+                             summaryFunction = twoClassSummary,
+                             classProbs = TRUE)
+  data_model=select(data_tr_sample,one_of(best_vars))
+  tunegrid=expand.grid(.fL=0,.usekernel=TRUE,.adjust=1)
+  fit_model_1 = train(x=data_model, 
+                      y= target, 'nb',metric = "ROC",
+                      trControl = fitControl,
+                      tuneGrid=tunegrid)
+  
+  metric=fit_model_1$results["ROC"][1,1]
+  return(metric)
+}
+
+custom_fitness <- function(vars, data_x, data_y, p_sampling)
+{
+  ix=get_sample(data_x, percentage_tr_rows = p_sampling)
+  data_2=data_x[ix,]
+  data_y_smp=data_y[ix]
+  names=colnames(data_2)
+  names_2=names[vars==1]
+  data_sol=data_2[, names_2]
+  roc_value=get_roc_metric(data_sol, data_y_smp, names_2)
+  q_vars=sum(vars)
+  fitness_value=roc_value/q_vars
+  return(fitness_value)
+}
+
+
+#Load library
+library(tm)
+library(dplyr)
+library(parallel)
+library(doParallel)
+library(caret)
+library(funModeling)
+library(tidyverse)
+library(GA)
+library(caret)
+library(e1071)
+library(fastNaiveBayes)
+
+
+#Import Data after Cleaning
+data=read.csv(file.choose()) 
+target=data$class #negative atau positive
+dataku=data$text
+
+
+#Make corpus data and stored as data to be processed into Genetic Algorithm
+Corpus.Data=VCorpus(VectorSource(data$text))
+nilai_fitur<-DocumentTermMatrix(Corpus.Data)
+data.fitur=as.matrix(nilai_fitur)
+fitur=data.frame(data.fitur)
+df=data.frame(c(fitur,data.frame(target)))
+write.csv(df,file="data to GA.csv")
+
+
+#Selecting feature using Genetic Algorithm
+df=na.omit(df) # Delete NA data
+data_y=as.factor(df$target)
+data_x=select(df, -target)
+param_nBits=ncol(data_x) #Parameter Genetic Algorithm
+col_names=colnames(data_x) #Parameter Genetic Algorithm
+ga_GA_1 = ga(fitness = function(vars) custom_fitness(vars = vars,data_x =  data_x, data_y = data_y, p_sampling = 0.7), 
+             type = "binary",
+             crossover=gabin_uCrossover, 
+             pmutation = 0.1,
+             pcrossover=0.8,
+             popSize = 50,
+             nBits = param_nBits, 
+             names=col_names,
+             maxiter = 100, 
+             monitor=plot, 
+             keepBest = TRUE, 
+             parallel = T, 
+             seed=8234) 
+summary(ga_GA_1)
+
+# Best Word of Feature
+best_vars_ga=col_names[ga_GA_1@solution[1,]==1]
+best_vars_ga
+
+
+# Deleted bad word of feature
+stemming=VCorpus(VectorSource(dataku))
+wordremove=col_names[ga_GA_1@solution[1,]==0] #ambil bad word of feature
+result=tm_map(stemming, removeWords, wordremove)
+GAresult <- data.frame(text=sapply(result, as.character)
+                       ,stringsAsFactors=FALSE)
+GAresult2<-data.frame(c(GAresult,data.frame(target)))
+write.csv(GAresult2,file="Result Genetic Algorithm.csv")
+
+
+#TF-IDF
+tweet.corpus <- iconv(GAResult2$text, to = 'UTF-8')
+tweet.corpus <- VCorpus(VectorSource(tweet.corpus))
+dtm.tf <- DocumentTermMatrix(tweet.corpus)
+dtm.tf.matriks=as.matrix(dtm.tf)
+write.csv(dtm.tf.matriks,file="matriks dtm tf.csv")
+dtm.tf.idf <- weightTfIdf(m=dtm.tf,normalize = TRUE)
+dtm.tf.idf.matriks=as.matrix(dtm.tf.idf)
+write.csv(dtm.tf.idf.matriks, file= "matriks dtm tfidf.csv")
+
+
+#Klasifikasi Naive Bayes
+data.nb=read.csv(file.choose()) #pilih data matriks dtm tfidf
+View(data.nb)
+data.nb$target=as.factor(data.nb$target)
+
+
+#split data
+data.Train <- createDataPartition(y = data.nb$target,p = 0.7,list = FALSE)
+training <- data.nb[data.Train,]
+testing <- data.nb[-data.Train,] 
+y = training$target
+x = training[,-167]
+nb.model = train(x,y,'nb',trControl=trainControl(method='cv',number=10))
+Predict <- predict(nb.model,newdata = testing) 
+confusionMatrix(Predict, testing$target, positive='positive')
+
+
+
